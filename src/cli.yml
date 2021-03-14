@@ -14,9 +14,10 @@ args:
           short: f
           long: file
           value_name: FILE
-          help: Specifies the GIF file path
+          help: Specifies the GIF file path or URL
           takes_value: true
           required: true
+          conflicts_with: ["file-web"]
     - offset_x:
           short: "x"
           value_name: OFFSET

@@ -1,7 +1,15 @@
-use std::{error::Error, fs::File, sync::Arc, time::Duration};
+use std::{
+    error::Error,
+    fs::File,
+    io::{Seek, SeekFrom, Write},
+    sync::Arc,
+    time::Duration,
+};
 
+use futures::{lock::Mutex, TryStreamExt};
 use gif;
-use tokio::{io::AsyncWriteExt, runtime::Runtime, signal, sync::Mutex};
+use hyper::Client;
+use tokio::{io::AsyncWriteExt, runtime::Runtime, signal};
 use tokio::{net::TcpStream, time::sleep};
 
 mod cli;
@@ -11,12 +19,40 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("🖼️ File: {}", options.file);
     println!("🖥️ URL: {}", options.url);
 
-    let file = match File::open(options.file) {
-        Ok(f) => f,
-        Err(e) => {
-            println!("Error when reading GIF file: {}", e);
-            return Ok(());
-        }
+    // Create Tokio Runtime
+    let rt = Runtime::new().unwrap();
+
+    let file_path = options.file.clone();
+    let file = match &file_path {
+        n if n.starts_with("http:") || n.starts_with("https:") => rt.block_on(async move {
+            let https = hyper_tls::HttpsConnector::new();
+            let http_client = Client::builder().build::<_, hyper::Body>(https);
+            let res = http_client.get(file_path.parse()?).await?;
+            let gif_data = res.into_body();
+
+            let mut std_temp = tempfile::tempfile()?;
+            let temp = Arc::new(Mutex::new(tokio::fs::File::from(std_temp.try_clone()?)));
+            gif_data
+                .try_for_each(|data| {
+                    let temp2 = temp.clone();
+                    async move {
+                        temp2
+                            .lock()
+                            .await
+                            .write_all(&data)
+                            .await
+                            .expect("Failed to save GIF");
+                        return Ok(());
+                    }
+                })
+                .await?;
+            temp.lock().await.flush().await?;
+            std_temp.seek(SeekFrom::Start(0))?;
+            println!("Downloaded file");
+
+            Result::<_, Box<dyn Error>>::Ok(std_temp)
+        })?,
+        _ => File::open(file_path)?,
     };
 
     let decode_options = {
@@ -77,8 +113,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         (commands, delays)
     };
 
-    // Create Tokio Runtime
-    let rt = Runtime::new().unwrap();
     rt.block_on(fluten(&options.url, &commands, &delays))?;
     Ok(())
 }
