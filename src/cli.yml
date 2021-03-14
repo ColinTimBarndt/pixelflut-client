@@ -1,0 +1,37 @@
+name: Pixelflut Client
+version: "1.0"
+author: Colin Tim Barndt <colin.barndt@gmail.com>
+about: Stream a gif to a server using Pixelflut
+args:
+    - url:
+          short: u
+          long: url
+          value_name: URL
+          help: Specify the Pixelflut Server URL
+          takes_value: true
+          required: true
+    - file:
+          short: f
+          long: file
+          value_name: FILE
+          help: Specifies the GIF file path
+          takes_value: true
+          required: true
+    - offset_x:
+          short: "x"
+          value_name: OFFSET
+          help: X-Offset on the Pixelflut canvas
+          takes_value: true
+          required: false
+    - offset_y:
+          short: "y"
+          value_name: OFFSET
+          help: Y-Offset on the Pixelflut canvas
+          takes_value: true
+          required: false
+    - alpha_color:
+          short: "a"
+          long: alpha-color
+          help: Color to use for transparent pixels
+          takes_value: true
+          required: false
