@@ -6,6 +6,8 @@ pub struct CliOptions {
     pub url: String,
     pub offset: (u32, u32),
     pub alpha_color: [u8; 6],
+    pub similarity: u32,
+    pub repair_chunks: u32,
 }
 
 pub fn get_options() -> CliOptions {
@@ -39,6 +41,16 @@ pub fn get_options() -> CliOptions {
             }
         } else {
             *b"ffffff"
+        },
+        similarity: if matches.is_present("similarity") {
+            value_t_or_exit!(matches, "similarity", u32)
+        } else {
+            0
+        },
+        repair_chunks: if matches.is_present("repair_chunks") {
+            value_t_or_exit!(matches, "repair_chunks", u32)
+        } else {
+            0
         },
     }
 }

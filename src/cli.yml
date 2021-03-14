@@ -3,36 +3,50 @@ version: "1.0"
 author: Colin Tim Barndt <colin.barndt@gmail.com>
 about: Stream a gif to a server using Pixelflut
 args:
-    - url:
-          short: u
-          long: url
-          value_name: URL
-          help: Specify the Pixelflut Server URL
-          takes_value: true
-          required: true
-    - file:
-          short: f
-          long: file
-          value_name: FILE
-          help: Specifies the GIF file path or URL
-          takes_value: true
-          required: true
-          conflicts_with: ["file-web"]
-    - offset_x:
-          short: "x"
-          value_name: OFFSET
-          help: X-Offset on the Pixelflut canvas
-          takes_value: true
-          required: false
-    - offset_y:
-          short: "y"
-          value_name: OFFSET
-          help: Y-Offset on the Pixelflut canvas
-          takes_value: true
-          required: false
-    - alpha_color:
-          short: "a"
-          long: alpha-color
-          help: Color to use for transparent pixels
-          takes_value: true
-          required: false
+  - url:
+      short: u
+      long: url
+      value_name: URL
+      help: Specify the Pixelflut Server URL
+      takes_value: true
+      required: true
+  - file:
+      short: f
+      long: file
+      value_name: FILE
+      help: Specifies the GIF file path or URL
+      takes_value: true
+      required: true
+  - offset_x:
+      short: "x"
+      value_name: OFFSET
+      help: X-Offset on the Pixelflut canvas
+      takes_value: true
+      required: false
+  - offset_y:
+      short: "y"
+      value_name: OFFSET
+      help: Y-Offset on the Pixelflut canvas
+      takes_value: true
+      required: false
+  - alpha_color:
+      short: "a"
+      long: alpha-color
+      value_name: COLOR
+      help: Color to use for transparent pixels
+      takes_value: true
+      required: false
+  - similarity:
+      short: "s"
+      long: similarity
+      value_name: THRESHOLD
+      help: "How similar pixels can be to be ignored (default: 0)"
+      takes_value: true
+      required: false
+  - repair_chunks:
+      short: "r"
+      long: repair
+      value_name: CHUNKS
+      help: "How many chunks to divide the image into for repairing grief. More chunks repair more evenly."
+      takes_value: true
+      required: false
