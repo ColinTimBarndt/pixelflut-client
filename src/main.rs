@@ -5,8 +5,9 @@ use hyper::{
     body::{Bytes, HttpBody},
     Client,
 };
+use rand::thread_rng;
 use tokio::{io::AsyncWriteExt, runtime::Runtime, signal};
-use tokio::{net::TcpStream, time::sleep};
+use tokio::{net::TcpStream, sync::oneshot, time::sleep};
 
 use image_data::{FlutInstructions, GifSource};
 
@@ -40,56 +41,68 @@ fn main() -> Result<(), Box<dyn Error>> {
                 data.extend(bytes.into_iter());
             }
 
-            println!("Downloaded file");
+            println!("🔽 Downloaded file");
 
             Result::<_, Box<dyn Error>>::Ok(GifSource::Vec(data))
         })?,
         _ => GifSource::File(File::open(file_path)?),
     };
 
-    println!("🖼️ Loading image...");
+    println!("🖼️ Parsing image...");
 
     let image = match gif {
         GifSource::File(file) => image_data::load_image(file),
         GifSource::Vec(vec) => image_data::load_image::<&[u8]>(vec.borrow()),
     };
 
-    println!("Optimizing...");
+    println!("✅ Optimizing...");
 
     let optimized = image_data::optimize_image(image, options.similarity);
 
     println!("📝 Generating Commands...");
 
-    let commands =
-        image_data::optimized_image_to_instructions(optimized, options.offset.0, options.offset.1);
+    let commands = image_data::optimized_image_to_instructions(
+        optimized,
+        options.offset.0,
+        options.offset.1,
+        &mut if options.shuffle {
+            Some(thread_rng())
+        } else {
+            None
+        }
+        .as_mut(),
+    );
 
-    rt.block_on(fluten(&options.url, commands))?;
+    rt.block_on(fluten(&options.url, commands, options.time_factor as u64))?;
     Ok(())
 }
 
-async fn fluten(url: &str, commands: FlutInstructions) -> Result<(), Box<dyn Error>> {
+async fn fluten(
+    url: &str,
+    commands: FlutInstructions,
+    time_factor: u64,
+) -> Result<(), Box<dyn Error>> {
     println!("📡 Connecting to server...");
     let mut stream = TcpStream::connect(url).await?;
-    println!("🚿 Flut! 🚿");
+    println!("🌊🌊 Flut! 🌊🌊");
     stream.write_all(&commands.start).await?;
     stream.flush().await?;
     let stop = Arc::new(Mutex::new(false));
     let stop2 = stop.clone();
     tokio::spawn(async move {
         drop(signal::ctrl_c().await);
-        println!("Stopping the Flut...");
+        println!("🧽 Stopping the Flut...");
         *stop2.lock().await = true;
     });
 
     loop {
-        for (cmds, _corrections, delay) in commands.frames.iter() {
-            //let done = Arc::new(Mutex::new(false));
-            //let done2 = done.clone();
+        for (cmds, corrections, delay) in commands.frames.iter() {
+            let (send_done, mut done) = oneshot::channel();
             let delay2 = *delay;
-            //tokio::spawn(async move {
-            //    sleep(Duration::from_millis(delay2 as u64 * 10)).await;
-            //    *done2.lock().await = true;
-            //});
+            tokio::spawn(async move {
+                sleep(Duration::from_millis(delay2 as u64 * 10 * time_factor)).await;
+                drop(send_done.send(()));
+            });
             /*loop {
                 stream.write_all(cmds).await?;
                 if *done.lock().await {
@@ -98,7 +111,21 @@ async fn fluten(url: &str, commands: FlutInstructions) -> Result<(), Box<dyn Err
             }*/
             stream.write_all(cmds).await?;
             stream.flush().await?;
-            sleep(Duration::from_millis(delay2 as u64 * 10)).await;
+            if corrections.len() > 0 {
+                let mut i = 0;
+                loop {
+                    match done.try_recv() {
+                        Ok(()) => break,
+                        Err(oneshot::error::TryRecvError::Closed) => break,
+                        Err(oneshot::error::TryRecvError::Empty) => {
+                            stream.write_all(&corrections[i]).await?;
+                            i = (i + 1) % corrections.len();
+                        }
+                    }
+                }
+            } else {
+                done.await?;
+            }
 
             if *stop.lock().await {
                 stream.flush().await?;

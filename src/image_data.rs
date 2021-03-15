@@ -1,3 +1,6 @@
+use rand::prelude::*;
+use rayon::prelude::*;
+use smallvec::SmallVec;
 use std::io::Read;
 use std::{fs::File, io::Write};
 
@@ -42,7 +45,10 @@ impl Pixel {
         }
         if let Self::Rgb(r1, g1, b1) = self {
             if let Self::Rgb(r2, g2, b2) = other {
-                return abs_diff(r1, r2) as u32 + abs_diff(g1, g2) as u32 + abs_diff(b1, b2) as u32;
+                return (abs_diff(r1, r2) as u32 * 76
+                    + abs_diff(g1, g2) as u32 * 150
+                    + abs_diff(b1, b2) as u32 * 29)
+                    / 255;
             }
         }
         return u32::MAX;
@@ -86,7 +92,7 @@ pub struct FlutInstructions {
     /// Start frame instructions
     pub start: Vec<u8>,
     /// Frame, correction instructions and delay in 10ms
-    pub frames: Vec<(Vec<u8>, Vec<Vec<u8>>, u16)>,
+    pub frames: Vec<(Vec<u8>, Vec<SmallVec<[u8; 18]>>, u16)>,
 }
 
 impl Frame {
@@ -110,19 +116,37 @@ impl Frame {
         //println!("Rel. Offset: {:?} {:?}", self_offset, other_offset);
 
         let mut new_data = vec![Pixel::Empty; (new_size.0 * new_size.1) as usize];
-        for (i, &self_pixel) in self.image.iter().enumerate() {
-            let i = i as u32;
-            let x = (i % self.size.0) + self_offset.0;
-            let y = (i / self.size.0) + self_offset.1;
-            new_data[(x + new_size.0 * y) as usize] = self_pixel;
-        }
-        for (i, &other_pixel) in other.image.iter().enumerate() {
-            let i = i as u32;
-            let x = (i % other.size.0) + other_offset.0;
-            let y = (i / other.size.0) + other_offset.1;
-            //println!("{} {}", x, y);
-            new_data[(x + new_size.0 * y) as usize].mut_combine(other_pixel, similarity);
-        }
+        self.image
+            .par_iter()
+            .enumerate()
+            .map(|(i, self_pixel)| {
+                let i = i as u32;
+                let x = (i % self.size.0) + self_offset.0;
+                let y = (i / self.size.0) + self_offset.1;
+                ((x + new_size.0 * y) as usize, self_pixel)
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .for_each(|(i, &self_pixel)| {
+                new_data[i] = self_pixel;
+            });
+
+        other
+            .image
+            .par_iter()
+            .enumerate()
+            .map(|(i, other_pixel)| {
+                let i = i as u32;
+                let x = (i % other.size.0) + other_offset.0;
+                let y = (i / other.size.0) + other_offset.1;
+                ((x + new_size.0 * y) as usize, other_pixel)
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .for_each(|(i, &other_pixel)| {
+                new_data[i].mut_combine(other_pixel, similarity);
+            });
+
         Frame {
             image: new_data,
             size: new_size,
@@ -130,19 +154,39 @@ impl Frame {
             delay: other.delay,
         }
     }
-    pub fn to_instructions(&self, off_x: u32, off_y: u32) -> Vec<u8> {
+    pub fn to_instructions<R: Rng + ?Sized>(
+        &self,
+        off_x: u32,
+        off_y: u32,
+        rng_option: &mut Option<&mut R>,
+    ) -> Vec<u8> {
         let off_x = self.offset.0 + off_x;
         let off_y = self.offset.1 + off_y;
-        let mut buffer = Vec::with_capacity(18 * self.image.len() / 2);
-        for (i, &pixel) in self.image.iter().enumerate() {
-            if let Pixel::Rgb(r, g, b) = pixel {
-                let i = i as u32;
-                let x = (i % self.size.0) + off_x;
-                let y = (i / self.size.0) + off_y;
-                write_instruction(&mut buffer, x, y, (r, g, b)).unwrap();
+        if let Some(rng) = rng_option {
+            let mut buffer = Vec::with_capacity(18 * self.image.len() / 2);
+            let mut pixels: Vec<_> = self.image.par_iter().enumerate().collect();
+            pixels.shuffle(*rng);
+            for (i, &pixel) in pixels {
+                if let Pixel::Rgb(r, g, b) = pixel {
+                    let i = i as u32;
+                    let x = (i % self.size.0) + off_x;
+                    let y = (i / self.size.0) + off_y;
+                    write_instruction(&mut buffer, x, y, (r, g, b)).unwrap();
+                }
             }
+            buffer
+        } else {
+            let mut buffer = Vec::with_capacity(18 * self.image.len() / 2);
+            for (i, &pixel) in self.image.iter().enumerate() {
+                if let Pixel::Rgb(r, g, b) = pixel {
+                    let i = i as u32;
+                    let x = (i % self.size.0) + off_x;
+                    let y = (i / self.size.0) + off_y;
+                    write_instruction(&mut buffer, x, y, (r, g, b)).unwrap();
+                }
+            }
+            buffer
         }
-        buffer
     }
 }
 
@@ -190,6 +234,9 @@ pub fn optimize_image(frames: Vec<Frame>, similarity: u32) -> OptimizedImage {
     let mut intermediate = start.clone();
     let mut optimized_frames = Vec::with_capacity(frames.len());
     let mut corrections = Vec::with_capacity(frames.len());
+    for _ in 0..corrections.capacity() {
+        corrections.push(Vec::with_capacity(0));
+    }
     optimized_frames.push(start.clone());
 
     for i in 1..frames.len() {
@@ -197,7 +244,8 @@ pub fn optimize_image(frames: Vec<Frame>, similarity: u32) -> OptimizedImage {
     }
     intermediate = intermediate.combine(&frames[0], similarity);
 
-    for i in 1..frames.len() {
+    for i in 1..=frames.len() {
+        let i = i % frames.len();
         let cmp = &frames[i];
         let combined_offset = (
             cmp.offset.0 - intermediate.offset.0,
@@ -269,33 +317,8 @@ pub fn optimize_image(frames: Vec<Frame>, similarity: u32) -> OptimizedImage {
             .filter(Option::is_some)
             .map(Option::unwrap)
             .collect();
-        corrections.push(correction);
+        corrections[i] = correction;
         intermediate = intermediate.combine(cmp, similarity);
-    }
-    {
-        // Optimize first frame
-        let cmp = &mut optimized_frames[0];
-        let combined_offset = (
-            cmp.offset.0 - intermediate.offset.0,
-            cmp.offset.1 - intermediate.offset.1,
-        );
-        cmp.image = cmp
-            .image
-            .iter()
-            .enumerate()
-            .map(|(i, &pixel)| {
-                let i = i as u32;
-                let x = i % cmp.size.0 + combined_offset.0;
-                let y = i / cmp.size.0 + combined_offset.1;
-                let idx = (x + intermediate.size.0 * y) as usize;
-
-                if intermediate.image[idx] == pixel {
-                    Pixel::Empty
-                } else {
-                    pixel
-                }
-            })
-            .collect();
     }
     OptimizedImage {
         start,
@@ -304,28 +327,60 @@ pub fn optimize_image(frames: Vec<Frame>, similarity: u32) -> OptimizedImage {
     }
 }
 
-pub fn optimized_image_to_instructions(
+pub fn optimized_image_to_instructions<R: Rng + ?Sized>(
     image: OptimizedImage,
     off_x: u32,
     off_y: u32,
+    rng_option: &mut Option<&mut R>,
 ) -> FlutInstructions {
     FlutInstructions {
-        start: image.start.to_instructions(off_x, off_y),
+        start: image.start.to_instructions(off_x, off_y, rng_option),
         frames: image
             .frames
             .iter()
             .zip(image.corrections)
             .map(|(frame, corrections)| {
                 (
-                    frame.to_instructions(off_x, off_y),
-                    corrections
-                        .iter()
-                        .map(|&(x, y, rgb)| {
-                            let mut b = Vec::with_capacity(18);
-                            write_instruction(&mut b, x, y, rgb).unwrap();
-                            b
-                        })
-                        .collect(),
+                    frame.to_instructions(off_x, off_y, rng_option),
+                    {
+                        let mut cr: Vec<_> = corrections
+                            .par_iter()
+                            .map(|&(x, y, rgb)| {
+                                let mut b: SmallVec<[u8; 18]> = SmallVec::new();
+                                write_instruction_smallvec(&mut b, x + off_x, y + off_y, rgb);
+                                b
+                            })
+                            .chain(
+                                frame
+                                    .image
+                                    .par_iter()
+                                    .enumerate()
+                                    .map(|(i, pixel)| {
+                                        let i = i as u32;
+                                        let x = (i % frame.size.0) + frame.offset.0 + off_x;
+                                        let y = (i / frame.size.0) + frame.offset.1 + off_y;
+                                        (x, y, pixel)
+                                    })
+                                    .filter(|(_x, _y, &pixel)| match pixel {
+                                        Pixel::Empty => false,
+                                        _ => true,
+                                    })
+                                    .map(|(x, y, &pixel)| {
+                                        if let Pixel::Rgb(r, g, b) = pixel {
+                                            let mut bytes: SmallVec<[u8; 18]> = SmallVec::new();
+                                            write_instruction_smallvec(&mut bytes, x, y, (r, g, b));
+                                            bytes
+                                        } else {
+                                            unreachable!();
+                                        }
+                                    }),
+                            )
+                            .collect();
+                        if let Some(rng) = rng_option {
+                            cr.shuffle(*rng);
+                        }
+                        cr
+                    },
                     frame.delay,
                 )
             })
@@ -343,4 +398,15 @@ fn write_instruction<W: Write>(
     c += buffer.write(&Pixel::rgb_to_hex(rgb))?;
     c += buffer.write(&[b'\n'])?;
     Ok(c)
+}
+
+fn write_instruction_smallvec<const N: usize>(
+    buffer: &mut SmallVec<[u8; N]>,
+    x: u32,
+    y: u32,
+    rgb: (u8, u8, u8),
+) {
+    buffer.extend_from_slice(format!("PX {} {} ", x, y).as_bytes());
+    buffer.extend_from_slice(&Pixel::rgb_to_hex(rgb));
+    buffer.push(b'\n');
 }

@@ -13,3 +13,6 @@ clap = {version="2.33", features=["yaml"]}
 hyper = {version="0.14", features=["http1", "http2", "client", "stream"]}
 hyper-tls = "0.5"
 futures = "0.3"
+rayon = "1.5"
+rand = "0.8"
+smallvec = {version="1.6", features=["const_generics"]}

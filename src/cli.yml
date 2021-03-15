@@ -29,24 +29,25 @@ args:
       help: Y-Offset on the Pixelflut canvas
       takes_value: true
       required: false
-  - alpha_color:
-      short: "a"
-      long: alpha-color
-      value_name: COLOR
-      help: Color to use for transparent pixels
-      takes_value: true
-      required: false
   - similarity:
       short: "s"
       long: similarity
       value_name: THRESHOLD
-      help: "How similar pixels can be to be ignored (default: 0)"
+      help: "How similar pixels can be to be treated as equal, smaller values mean more similarity (default: 0)"
       takes_value: true
       required: false
-  - repair_chunks:
-      short: "r"
-      long: repair
-      value_name: CHUNKS
-      help: "How many chunks to divide the image into for repairing grief. More chunks repair more evenly."
+  - shuffle:
+      long: shuffle
+      value_name: SHUFFLE
+      help: "If the instruction should be shuffled for a better image quality if griefed (default: yes)"
+      takes_value: true
+      possible_values:
+        - yes
+        - no
+      required: false
+  - time_factor:
+      long: time-factor
+      value_name: FACTOR
+      help: "Factor by which to scale the time between frames from the original GIF, a higher value means slower animation but more resistant against grief (default: 10)"
       takes_value: true
       required: false
